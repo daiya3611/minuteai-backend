@@ -4,6 +4,9 @@ const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 
+const { buildSnapshot, runDigest } = require('./src/services/digest');
+const { startScheduler } = require('./src/scheduler');
+
 const app = express();
 const PORT = process.env.PORT || 3001;
 
@@ -106,10 +109,39 @@ app.get('/api/subscription-status', async (req, res) => {
   }
 });
 
+// === マーケット動向・ニュース監視 ===
+
+// 株価 + ニュースの生スナップショット(AI要約・通知なし)。
+app.get('/api/market/snapshot', async (req, res) => {
+  try {
+    const snapshot = await buildSnapshot();
+    return res.json(snapshot);
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// その場でダイジェストを生成(AI要約)。?notify=true でSlack配信も行う。
+app.post('/api/market/digest', async (req, res) => {
+  const notify = req.query.notify === 'true' || req.body?.notify === true;
+  try {
+    const result = await runDigest({ notify });
+    return res.json({
+      headline: result.headline,
+      text: result.text,
+      generatedBy: result.generatedBy,
+      delivery: result.delivery,
+    });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok' });
 });
 
 app.listen(PORT, () => {
   console.log(`MinuteAI バックエンド起動 http://localhost:${PORT}`);
+  startScheduler();
 });
